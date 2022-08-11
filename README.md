@@ -1,4 +1,4 @@
-# NIPS22: Low-latency Transfer Learning for Spiking Neural Networks
+# AAAI23: Low latency conversion of artificial neural network models to rate-encoded spiking neural networks
 
 ## Installation
 The repository includes C++ and CUDA code that has to be compiled and installed before it can be used from Python, download the repository and run the following command to do so:
@@ -6,8 +6,8 @@ The repository includes C++ and CUDA code that has to be compiled and installed 
 `python setup.py install`
 
 ## Pretrained Weights
-https://drive.google.com/file/d/1FlZBkOfAWNWJvQzH-V9KncH0gdyQiFa9/view?usp=sharing 
-You can ran the code like "python cifar10_vr_vgg16.py --epochs 0 --k 0" using our pretrained weights.
+https://drive.google.com/file/d/1Vk__ywKDOotjgHcn-wflH7RSqzL9RbH3/view?usp=sharing
+You can ran the code like "python file_name.py --epochs 0 --k 0" using our pretrained weights.
 
 
 ## License & Copyright
