@@ -1,4 +1,4 @@
-# AAAI23: Low latency conversion of artificial neural network models to rate-encoded spiking neural networks
+# Low latency conversion of artificial neural network models to rate-encoded spiking neural networks
 
 ## Installation
 The repository includes C++ and CUDA code that has to be compiled and installed before it can be used from Python, download the repository and run the following command to do so:
