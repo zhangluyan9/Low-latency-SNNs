@@ -15,17 +15,17 @@ import catSNN
 import catCuda
 import numpy as np
 
-T_reduce = 8
-timestep = 10
-timestep_f = 10
-file_load = "cifar100_NIPS_t8_10.pt"
+T_reduce = 16
+timestep = 20
+timestep_f = 20
+file_load = "../../pretrain_weight/cifar100/cifar100_NIPS_t16_20.pt"
 #cifar100_vggo_1109_10_16_cTT
 #cifar100_NIPS_t8_10
-weight_load = 'cifar_100_t_16_20.npz'
+weight_load = '../../pretrain_weight/cifar100/cifar_100_t_16_20_.npz'
 #f_name = 'neuron_100_trysoa.npz'
 min_1 = 0
 max_1 = T_reduce/timestep
-f_store = 'cifar_100_t_8_10.npz'
+f_store = '../../pretrain_weight/cifar100/cifar_100_t_16_20_tnnls1.npz'
 #max_1 = 1
 
 

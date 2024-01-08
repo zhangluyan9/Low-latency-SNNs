@@ -14,9 +14,9 @@ from catSNN import spikeLayer, load_model, max_weight, normalize_weight, SpikeDa
 from models.vgg_onlyt_vr_cifar100 import VGG_o_,CatVGG_o
 import catSNN
 import catCuda
-T_reduce = 8
-timestep = 10
-timestep_f = 10.0
+T_reduce = 16
+timestep = 20
+timestep_f = 20.0
 #f_name = 'neuron_100_trysoa.npz'
 f_name = 'neuron_50.npz'
 min_1 = 0
@@ -63,6 +63,7 @@ class AddQuantization_new(object):
         
         x_origin_plus_1 = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep+1)), timestep+1),min=min_1, max=T_reduce/(timestep+1))
         my_ones = torch.ones(x_origin_plus_1.shape[0],x_origin_plus_1.shape[1],x_origin_plus_1.shape[2])
+        
         for i in range(1,T_reduce+1):
             x_origin_plus_1 = torch.where(x_origin_plus_1 == i*T_reduce / (T_reduce * (timestep + 1)), i*my_ones * max_1 / T_reduce, x_origin_plus_1)
         #[0, 1/6, 2/6, 3/6]
@@ -261,7 +262,7 @@ def main():
     model = VGG_o_('VGG16', clamp_max=1,bias =True).to(device)
     #vgg16_largeinput_NIPS_16_20_
     #cifar10_0_5_ASG_100_08_0316_100_1_full_input
-    model.load_state_dict(torch.load("vgg16_largeinput_NIPS_8_10_cifar100.pt"), strict=False)
+    model.load_state_dict(torch.load("../../pretrain_weight/cifar100/vgg16_largeinput_NIPS_8_10_cifar100.pt"), strict=False)
     snn_model = CatVGG_o('VGG16', args.T,bias =True).to(device)
 
     

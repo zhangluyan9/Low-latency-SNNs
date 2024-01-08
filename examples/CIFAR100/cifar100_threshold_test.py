@@ -15,14 +15,14 @@ import catSNN
 import catCuda
 import numpy as np
 
-T_reduce = 8
-timestep = 10
-timestep_f = 10
-file_load = "cifar100_NIPS_t8_10.pt"
+T_reduce = 16
+timestep = 20
+timestep_f = 20
+file_load = "../../pretrain_weight/cifar100/cifar100_NIPS_t16_20.pt"
 #f_name = 'neuron_100_trysoa.npz'
 min_1 = 0
 max_1 = T_reduce/timestep
-f_store = 'cifar_100_t_8_10.npz'
+f_store = '../../pretrain_weight/cifar100/cifar_100_t_16_20_tnnls1.npz'
 #max_1 = 1
 
 
@@ -51,7 +51,7 @@ def transfer_model(src, dst, quantize_bit=32):
 def create_spike_input_cuda(input,T):
     spikes_data = [input for _ in range(T)]
     out = torch.stack(spikes_data, dim=-1).type(torch.FloatTensor).cuda() #float
-    out = catCuda.getSpikes(out, T_reduce/timestep-0.0001)
+    out = catCuda.getSpikes(out, T_reduce/timestep-0.001)
     return out
 class NewSpike(nn.Module):
     def __init__(self, T = T_reduce):
@@ -507,7 +507,7 @@ def main():
     test_loader = torch.utils.data.DataLoader(testset, batch_size=500, shuffle=False)
 
 
-    snn_dataset = SpikeDataset(testset, T = args.T,theta = (max_1-0.0001))
+    snn_dataset = SpikeDataset(testset, T = args.T,theta = (max_1-0.001))
     snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=500, shuffle=False)
 
     from models.vgg_vr_t1 import VGG_5,CatVGG,VGG_5_
@@ -541,7 +541,7 @@ def main():
     
     model = fuse_bn_recursively(model)
     transfer_model(model, snn_model)
-    test(model, device, test_loader)
+    #test(model, device, test_loader)
 
     #test_(snn_model, device, snn_loader)
     

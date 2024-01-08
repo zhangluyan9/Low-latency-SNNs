@@ -25,7 +25,88 @@ file_load_n = "../../pretrain_weight/cifar100/cifar100_NIPS_t8_10.pt"
 min_1 = 0
 max_1 = T_reduce/timestep
 #max_1 = 1
+num_ones_all = 0
+cfg = {
+    'o' : [128,128,'M',256,256,'M',512,512,'M',(1024,0),'M'],
+    'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'o_low' : [(128,1,6.5162),(128,1,1.0253),'M',(256,1,1.6196),(256,1,0.8609),'M',(512,1,1.8470),(512,1,0.7465),'M',(1024,0,1.7244),'M'],
+    'o_low_' : [(128,1,3.3402),(128,1,1.3331),'M',(256,1,1.1860),(256,1,0.8403),'M',(512,1,1.8164),(512,1,0.7146),'M',(1024,0,1.1968),'M'],
 
+
+}
+class NewSpike(nn.Module):
+    def __init__(self, T=4):
+        super(NewSpike, self).__init__()
+        self.T = T
+        self.total_num_ones = 0  # 新增的累积变量
+
+    def forward(self, x):
+        x = (torch.sum(x, dim=4))/self.T
+        x = create_spike_input_cuda(x, self.T)
+        num_ones = torch.sum(x).item()
+        #print(num_ones)
+        self.total_num_ones += num_ones  # 更新累积变量
+        return x
+
+    def get_total_num_ones(self):
+        return self.total_num_ones
+
+    def reset_total_num_ones(self):
+        self.total_num_ones = 0  # 重置方法
+    
+
+class CatVGG(nn.Module):
+    def __init__(self, vgg_name, T, is_noise=False, bias=True):
+        super(CatVGG, self).__init__()
+        self.snn = catSNN.spikeLayer(T)
+        self.T = T
+        self.is_noise = is_noise
+        self.bias = bias
+
+        self.features = self._make_layers(cfg[vgg_name], is_noise)
+        self.classifier1 = self.snn.dense((1, 1, 1024), 100,bias = True)
+
+    def forward(self, x):
+        #print(torch.sum(x).item())
+        out = self.features(x)
+        out = self.classifier1(out)
+        out_ = torch.sum(out)
+        #print(float(out_))
+        out = self.snn.sum_spikes(out) / self.T
+        return out, out_
+
+    def _make_layers(self, cfg, is_noise=False):
+        layers = []
+        in_channels = 18
+        for x in cfg:
+            if x == 'M':
+                layers += [self.snn.pool(2),NewSpike(self.T)]
+            else:
+                if is_noise:
+                    layers += [self.snn.mcConv(in_channels, x, kernelSize=3, padding=1, bias=self.bias),
+                               self.snn.spikeLayer(T_reduce/timestep-0.001),nn.Identity()]
+                    in_channels = x
+                else:
+                    padding = x[1] if isinstance(x, tuple) else 1
+                    out_channels = x[0] if isinstance(x, tuple) else x
+                    layers += [self.snn.conv(in_channels, out_channels, kernelSize=3, padding=padding, bias=self.bias),
+                               NewSpike(self.T ),nn.Identity()]
+                    in_channels = out_channels
+        return nn.Sequential(*layers)
+    
+    def get_total_num_ones(self):
+        total = 0
+        for layer in self.features:
+            if isinstance(layer, NewSpike):
+                total += layer.get_total_num_ones()
+        return total
+
+    def reset_total_num_ones(self):
+        for layer in self.features:
+            if isinstance(layer, NewSpike):
+                layer.reset_total_num_ones()
+    
 class AddQuantization_new(object):
     def __init__(self, min=0., max=1.):
         self.min = min
@@ -39,15 +120,16 @@ class AddQuantization_new(object):
         #0/11,1/11,2/11,3/11,4/11,5/11,6/11,7/11,8/11
 
         my_ones = torch.ones(x_origin_plus_1.shape[0],x_origin_plus_1.shape[1],x_origin_plus_1.shape[2])
-        for i in range(0,T_reduce+1):
-            x_origin_plus_1 = torch.where(x_origin_plus_1 == i/(timestep + 1), i*my_ones/timestep, x_origin_plus_1)
+        for i in range(1,T_reduce+1):
+            x_origin_plus_1 = torch.where(x_origin_plus_1 == i/ (  (timestep + 1)), i*my_ones  / timestep, x_origin_plus_1)
 
         x_origin_minus_1 = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep-1)), timestep-1),min=min_1, max=T_reduce/(timestep-1))
         my_ones = torch.ones(x_origin_minus_1.shape[0],x_origin_minus_1.shape[1],x_origin_minus_1.shape[2])
-        for i in range(0,T_reduce+1):
+        for i in range(1,T_reduce+1):
             x_origin_minus_1 = torch.where(x_origin_minus_1 == i / ((timestep - 1)), i*my_ones   / timestep, x_origin_minus_1)
     
         x = torch.cat((x_origin, x_origin_plus_1,x_origin_minus_1,x_origin,x_origin_plus_1,x_origin_minus_1), 0)
+        x_flattened = x.flatten()
 
         # 找出所有唯一的值
         #unique_values = set(x_flattened.tolist())
@@ -81,9 +163,9 @@ f_store = 'cifar_100_t_20.npz'
 def create_spike_input_cuda(input,T):
     spikes_data = [input for _ in range(T)]
     out = torch.stack(spikes_data, dim=-1).type(torch.FloatTensor).cuda() #float
-    out = catCuda.getSpikes(out, 0.999)
+    # t=1，2: T_reduce/timestep-0.001; 
+    out = catCuda.getSpikes(out, T_reduce/timestep-0.001)
     return out
-
 def spike_channel(input,Threshold):
     input = input.transpose(-4, -5)
     output = input.clone().cuda()
@@ -93,50 +175,7 @@ def spike_channel(input,Threshold):
     output = output.transpose(-4, -5)
     return output
 
-def threshold_training_snn(input, y_origin,threshold,T,index):
-    #print(index)
-    #print(threshold[0])
-    threshold_pre_1 = threshold
-    mul =  input.shape[0] *input.shape[2] *input.shape[3] *input.shape[4]  
-    y_new = spike_channel(input.clone(),threshold_pre_1)
-    y = (torch.sum(y_origin.clone(), dim=4)) /T
-    y = create_spike_input_cuda(y, T)
-    
-    threshold_1 =  threshold_pre_1
-    """
-    for i in range (y.shape[1]):
-        j = 0 
-        diff = (torch.sum(y.transpose(-4, -5)[i])-torch.sum(y_new.transpose(-4, -5)[i]))/mul
-        #print("before",diff)
-        diff_ = torch.sum(torch.logical_xor(y.transpose(-4, -5)[i],y_new.transpose(-4, -5)[i]))/mul
-        threshold_1[i] = threshold_1[i] - 0.1*diff
-        
-        if  diff > 5e-2 or diff < - 5e-2: 
-            threshold_1[i] = threshold_1[i] - diff
-        elif diff > 5e-3 or diff < - 5e-3:
-            threshold_1[i] = threshold_1[i] - 0.1*diff
-        elif diff > 5e-4 or diff < - 5e-4:
-            threshold_1[i] = threshold_1[i] - 0.01*diff
-        
 
-        
-        while diff_ > 4e-3 or diff_ < - 4e-3:
-            j+=1
-            threshold_1[i] = threshold_1[i] - 0.1*diff_*diff/torch.abs(diff)
-            y_new = spike_channel((input).clone(),threshold_1)
-            diff = (torch.sum(y.transpose(-4, -5)[i])-torch.sum(y_new.transpose(-4, -5)[i]))/mul
-            diff_ = torch.sum(torch.logical_xor(y.transpose(-4, -5)[i],y_new.transpose(-4, -5)[i]))/mul
-            #print(j)
-            if j >=30:
-                break
-        """    
-        #print("after",diff)
-    
-    #print(threshold_pre_1[0])
-    #print(threshold_1[0])
-
-    threshold_pre_1 =  threshold_1 
-    return y_new,y
 
 class AddQuantization(object):
     def __init__(self, min=0., max=1.):
@@ -268,14 +307,17 @@ def test_(model, device, test_loader):
     model.eval()
     test_loss = 0
     correct = 0
+    s = 0
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             #onehot = torch.nn.functional.one_hot(target, 10)
-            output = model(data)
+            output,out_ = model(data)
             test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             correct += pred.eq(target.view_as(pred)).sum().item()
+            s +=out_
+
             #print(pred.eq(target.view_as(pred)).sum().item())
 
     test_loss /= len(test_loader.dataset)
@@ -283,135 +325,7 @@ def test_(model, device, test_loader):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
-    return correct
-
-def test_snn(model, device, test_loader):
-    model.eval()
-    test_loss = 0
-    correct = 0
-    # 78 77 77
-    #9 9654 8 9697 7 9712 6 9734
-    
-    f = np.load(f_store)
-    threshold_pre_1 = f['threshold_pre_1']
-    threshold_pre_2 = f['threshold_pre_2']
-    threshold_pre_3 = f['threshold_pre_3']
-    threshold_pre_4 = f['threshold_pre_4']
-    threshold_pre_5 = f['threshold_pre_5']
-    threshold_pre_6 = f['threshold_pre_6']
-    threshold_pre_7 = f['threshold_pre_7']
-
-    p1 = f['p1']
-    p2 = f['p2']
-    p3 = f['p3']
-    p4 = f['p4']
-    """
-    #93 90 90
-    #f = np.load('cifar_layerwise_train_30_1.npz')
-    fac = 0.7
-    threshold_pre_1 = np.ones(128)*fac
-    threshold_pre_2 = np.ones(128)*fac
-    threshold_pre_3 = np.ones(256)*fac
-    threshold_pre_4 = np.ones(256)*fac
-    threshold_pre_5 = np.ones(512)*fac
-    threshold_pre_6 = np.ones(512)*fac
-    threshold_pre_7 = np.ones(1024)*fac
-
-    p1 = np.ones(128)*fac
-    p2 = np.ones(256)*fac
-    p3 = np.ones(512)*fac
-    p4 = np.ones(1024)*fac
-    """
-
-    """
-    f = np.load('cifar_layerwise_train_30_1.npz')
-    threshold_pre_1 = np.ones(128)*f['threshold_pre_1'][0]
-    threshold_pre_2 = np.ones(128)*f['threshold_pre_2'][0]
-    threshold_pre_3 = np.ones(256)*f['threshold_pre_3'][0]
-    threshold_pre_4 = np.ones(256)*f['threshold_pre_4'][0]
-    threshold_pre_5 = np.ones(512)*f['threshold_pre_5'][0]
-    threshold_pre_6 = np.ones(512)*f['threshold_pre_6'][0]
-    threshold_pre_7 = np.ones(1024)*f['threshold_pre_7'][0]
-
-    p1 = np.ones(128)*f['p1'][0]
-    p2 = np.ones(256)*f['p2'][0]
-    p3 = np.ones(512)*f['p3'][0]
-    p4 = np.ones(1024)*f['p4'][0]
-    """
-
-    with torch.no_grad():
-        i = 0
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            output,threshold_pre_1,threshold_pre_2,threshold_pre_3,threshold_pre_4,threshold_pre_5,threshold_pre_6,threshold_pre_7,p1,p2,p3,p4 = model(data,threshold_pre_1,threshold_pre_2,threshold_pre_3,threshold_pre_4,threshold_pre_5,threshold_pre_6,threshold_pre_7,p1,p2,p3,p4)
-            test_loss +=  F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            #print(pred.eq(target.view_as(pred)).sum().item())
-            #np.savez(f_store,threshold_pre_1=threshold_pre_1,threshold_pre_2=threshold_pre_2,threshold_pre_3=threshold_pre_3,threshold_pre_4=threshold_pre_4,threshold_pre_5=threshold_pre_5,threshold_pre_6=threshold_pre_6,threshold_pre_7=threshold_pre_7,p1=p1,p2=p2,p3=p3,p4=p4)
-
-    test_loss /= len(test_loader.dataset)
-    #np.savez('cifar_30_lay_chann.npz',threshold_pre_1=threshold_pre_1,threshold_pre_2=threshold_pre_2,threshold_pre_3=threshold_pre_3,threshold_pre_4=threshold_pre_4,threshold_pre_5=threshold_pre_5,threshold_pre_6=threshold_pre_6,threshold_pre_7=threshold_pre_7,p1=p1,p2=p2,p3=p3,p4=p4)
-
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(test_loss, correct, len(test_loader.dataset),100. * correct / len(test_loader.dataset)))
-    
-
-    return correct
-#'o' : [(128,1,1),(128,1,2),'M',(256,1,3),(256,1,4),'M',(512,1,5),(512,1,6),'M',(1024,0,7),'M'],
-#self.snn.conv(in_channels, out_channels, kernelSize=3, padding=padding, bias=self.bias),self.snn.spikeLayer(1.0)
-
-class CatNet_training(nn.Module):
-
-    def __init__(self, T):
-        super(CatNet_training, self).__init__()
-        self.T = T
-        snn = spikeLayer(T)
-        self.snn=snn
-        self.conv1 = snn.conv(3, 128, kernelSize=3, padding=1,bias=True)
-        self.conv2 = snn.conv(128, 128, kernelSize=3, padding=1,bias=True)
-        self.pool1 = snn.pool(2)
-        self.conv3= snn.conv(128, 256, kernelSize=3, padding=1,bias=True)
-        self.conv4= snn.conv(256, 256, kernelSize=3, padding=1,bias=True)
-        self.pool2 = snn.pool(2)
-        self.conv5= snn.conv(256, 512, kernelSize=3, padding=1,bias=True)
-        self.conv6 = snn.conv(512, 512, kernelSize=3, padding=1,bias=True)
-        self.pool3 = snn.pool(2)
-        self.conv7 = snn.conv(512, 1024, kernelSize=3, padding=0,bias=True)
-        self.pool4 = snn.pool(2)
-        
-        self.classifier1 = snn.dense((1,1,1024), 100, bias=True)
-        #self.fc2 = snn.dense(128, 10, bias=True)
-
-
-    def forward(self, x,threshold_pre_1,threshold_pre_2,threshold_pre_3,threshold_pre_4,threshold_pre_5,threshold_pre_6,threshold_pre_7,p1,p2,p3,p4):
-    #def forward(self, x):
-        #x,indices = torch.sort(x, descending=True)  
-        x,y = threshold_training_snn(self.conv1(x),self.conv1(x),threshold_pre_1,self.T,1)
-        x,y = threshold_training_snn(self.conv2(x),self.conv2(y),threshold_pre_2,self.T,2)
-        x,y = threshold_training_snn(self.pool1(x),self.pool1(y),p1,self.T,3)
-        x,y = threshold_training_snn(self.conv3(x),self.conv3(y),threshold_pre_3,self.T,4)
-        x,y = threshold_training_snn(self.conv4(x),self.conv4(y),threshold_pre_4,self.T,5)
-        x,y = threshold_training_snn(self.pool2(x),self.pool2(y),p2,self.T,6)
-        x,y = threshold_training_snn(self.conv5(x),self.conv5(y),threshold_pre_5,self.T,7)
-        x,y = threshold_training_snn(self.conv6(x),self.conv6(y),threshold_pre_6,self.T,8)
-        x,y = threshold_training_snn(self.pool3(x),self.pool3(y),p3,self.T,9)
-        x,y = threshold_training_snn(self.conv7(x),self.conv7(y),threshold_pre_7,self.T,10)
-        x,y = threshold_training_snn(self.pool4(x),self.pool4(y),p4,self.T,11)
-        """
-        x = self.snn.spike(self.conv1(x))
-        x = self.snn.spike(self.conv2(x))
-        x = self.snn.spike(self.pool1(x))
-        x = self.snn.spike(self.conv3(x))
-        x = self.snn.spike(self.conv4(x))
-        x = self.snn.spike(self.pool2(x))
-        x = self.snn.spike(self.conv5(x))
-        x = self.snn.spike(self.conv6(x))
-        x = self.snn.spike(self.pool3(x))
-        x = self.snn.spike(self.conv7(x))
-        x = self.snn.spike(self.pool4(x))
-        """
-        x = self.classifier1(x)
-        return self.snn.sum_spikes(x)/self.T,threshold_pre_1,threshold_pre_2,threshold_pre_3,threshold_pre_4,threshold_pre_5,threshold_pre_6,threshold_pre_7,p1,p2,p3,p4
+    return correct,s
 
 
 
@@ -497,26 +411,11 @@ def main():
     snn_dataset = SpikeDataset(testset, T = args.T,theta = max_1-0.001)
     snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=1000, shuffle=False)
 
-    from models.vgg_vr_t1 import VGG_5,CatVGG,VGG_5_
-    model_ = VGG_5('o', clamp_max=1.0, bias = True).to(device)
-    #cifar100_vggo_0505_2
-    #vggo_largeinput_3
-    #cifar100_vggo_16_1109_
-
-    #cifar100_vggo_16_1109
-    
-    #model_.load_state_dict(torch.load(file_load), strict=False)
-
+    from models.vgg_vr_t1 import VGG_5,VGG_5_
     model= VGG_5_('o', clamp_max=1,bias =True).to(device)
     model.load_state_dict(torch.load(file_load_n), strict=False)
 
     snn_model = CatVGG('o', args.T, is_noise=False, bias = True).to(device)
-    snn_model_training = CatNet_training(args.T).to(device)
-
-    for param_tensor in snn_model.state_dict():
-        print(param_tensor, "\t", snn_model.state_dict()[param_tensor].size())
-    if args.resume != None:
-        model.load_state_dict(torch.load(args.resume))
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
@@ -529,61 +428,19 @@ def main():
         correct = test(model, device, test_loader)
         if correct>correct_:
             correct_ = correct
-            torch.save(model.state_dict(),"../../pretrain_weight/cifar100/1.pt")
+            torch.save(model.state_dict(),"../../pretrain_weight/cifar100/cifar100_NIPS_t1_2dot5_tnnls.pt")
         scheduler.step()
-    #torch.save(model.state_dict(), "cifar100_NIPS_t3_5.pt")
     
     model = fuse_bn_recursively(model)
-    #test(model, device, test_loader)
 
     transfer_model(model, snn_model)
-    #with torch.no_grad():
-    #    normalize_weight(snn_model.features, quantize_bit=11)
 
-    test_(snn_model, device, snn_loader)
-    """
-    model_dict = snn_model_training.state_dict()
-    pre_dict = snn_model.state_dict()
-
-    reshape_dict = {}
-    reshape_dict['conv1.weight'] = nn.Parameter(pre_dict['features.0.weight'],requires_grad=False)
-    reshape_dict['conv1.bias'] = nn.Parameter(pre_dict['features.0.bias'],requires_grad=False)
-
-    reshape_dict['conv2.weight'] = nn.Parameter(pre_dict['features.3.weight'],requires_grad=False)
-    reshape_dict['conv2.bias'] = nn.Parameter(pre_dict['features.3.bias'],requires_grad=False)
-
-    reshape_dict['conv3.weight'] = nn.Parameter(pre_dict['features.8.weight'],requires_grad=False)
-    reshape_dict['conv3.bias'] = nn.Parameter(pre_dict['features.8.bias'],requires_grad=False)
-
-    reshape_dict['conv4.weight'] = nn.Parameter(pre_dict['features.11.weight'],requires_grad=False)
-    reshape_dict['conv4.bias'] = nn.Parameter(pre_dict['features.11.bias'],requires_grad=False)
-
-    reshape_dict['conv5.weight'] = nn.Parameter(pre_dict['features.16.weight'],requires_grad=False)
-    reshape_dict['conv5.bias'] = nn.Parameter(pre_dict['features.16.bias'],requires_grad=False)
-
-    reshape_dict['conv6.weight'] = nn.Parameter(pre_dict['features.19.weight'],requires_grad=False)
-    reshape_dict['conv6.bias'] = nn.Parameter(pre_dict['features.19.bias'],requires_grad=False)
-
-    reshape_dict['conv7.weight'] = nn.Parameter(pre_dict['features.24.weight'],requires_grad=False)
-    reshape_dict['conv7.bias'] = nn.Parameter(pre_dict['features.24.bias'],requires_grad=False)
-
-    reshape_dict['classifier1.weight']=nn.Parameter(pre_dict['classifier1.weight'],requires_grad=False)
-    reshape_dict['classifier1.bias']=nn.Parameter(pre_dict['classifier1.bias'],requires_grad=False)
-
-    model_dict.update(reshape_dict)
-    snn_model_training.load_state_dict(model_dict)
-
-    #with torch.no_grad():
-    #    normalize_weight(snn_model.features, quantize_bit=11)
-    test_(snn_model, device, snn_loader)
-    #test_snn(snn_model_training, device, snn_loader)
-    #test_(snn_model, device, snn_loader)
-    
-    #model = fuse_bn_recursively(model)
-    #transfer_model(model, snn_model)
-    #test_(snn_model, device, snn_loader)
-    
-    """
+    corr,add = test_(snn_model, device, snn_loader)
+    #print(num_ones_all)
+    total_num_ones = snn_model.get_total_num_ones()
+    print("Total number of ones in the dataset:", total_num_ones/10000)
+    #print(float(add/10000))
+    #print("Total number of ones in the dataset:", total_num_ones)
 
 
 if __name__ == '__main__':

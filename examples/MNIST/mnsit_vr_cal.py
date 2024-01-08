@@ -12,10 +12,10 @@ from catSNN import spikeLayer, SpikeDataset ,load_model, fuse_module
 import catCuda
 import numpy as np
 
-T = 4
-timestep = 4
-T_win = 1
-T_reduce = 1
+T = 100
+timestep = 100
+T_win = 100
+T_reduce = 100
 min_1 = 0
 max_1 = T_win/T
 
@@ -258,14 +258,28 @@ class CatNet(nn.Module):
 
         x = self.fc1(y)
         """
-        x = self.snn.spike(self.conv1(x), theta = max_1-0.001)
-        y_ = self.snn.spike(self.conv2(x), theta = max_1-0.001)
-        y = self.snn.spike(self.conv3(y_), theta = max_1-0.001)
-        x = self.snn.spike(self.conv4(y), theta = max_1-0.001)
-        x = self.snn.spike(self.conv5(x), theta = max_1-0.001)
-        x = self.snn.spike(self.conv6(x), theta =max_1-0.001)
-        x = self.snn.spike(self.conv7(x), theta = max_1-0.001)
+        x = self.snn.spike(self.conv1(x), theta = max_1-0.0001)
+        sum_t = torch.sum(x)
+        #print(sum_t)
+        x = self.snn.spike(self.conv2(x), theta = max_1-0.0001)
+        sum_t+=torch.sum(x)
+        x = self.snn.spike(self.conv3(x), theta = max_1-0.0001)
+        sum_t+=torch.sum(x)
+
+        x = self.snn.spike(self.conv4(x), theta = max_1-0.0001)
+        sum_t+=torch.sum(x)
+
+        x = self.snn.spike(self.conv5(x), theta = max_1-0.0001)
+        sum_t+=torch.sum(x)
+
+        x = self.snn.spike(self.conv6(x), theta =max_1-0.0001)
+        sum_t+=torch.sum(x)
+
+        x = self.snn.spike(self.conv7(x), theta = max_1-0.0001)
+        sum_t+=torch.sum(x)
+        print(float(sum_t))
         x = self.fc1(x)
+        
         
         return self.snn.sum_spikes(x)/self.T
 
@@ -296,7 +310,7 @@ def test(model, device, test_loader):
             output = model(data)
             test_loss += F.mse_loss(output, onehot.type(torch.float), reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            print(pred.eq(target.view_as(pred)).sum().item())
+            #print(pred.eq(target.view_as(pred)).sum().item())
             correct += pred.eq(target.view_as(pred)).sum().item()
 
     test_loss /= len(test_loader.dataset)
@@ -360,7 +374,7 @@ def main():
     dataset1 = datasets.MNIST('../data', train=True, download=True,
                        transform=transform_train)
 
-    for i in range(30):
+    for i in range(5):
         transform_train_1 = transforms.Compose([
             transforms.RandomRotation(10),
             #transforms.RandomHorizontalFlip(),
@@ -374,7 +388,7 @@ def main():
 
     dataset2 = datasets.MNIST('../data', train=False,
                        transform=transform)
-    snn_dataset = SpikeDataset(dataset2, T = args.T,theta = max_1-0.01)
+    snn_dataset = SpikeDataset(dataset2, T = args.T,theta = max_1-0.0001)
     #print(type(dataset1[0][0]))
     train_loader = torch.utils.data.DataLoader(dataset1,**kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **kwargs)
@@ -383,7 +397,7 @@ def main():
 
     model = Net().to(device)
     snn_model = CatNet(args.T).to(device)
-    model.load_state_dict(torch.load("MNSIT_t_1_4.pt"), strict=False)
+    model.load_state_dict(torch.load("Nips_MNIST_t100.pt"), strict=False)
     #model.load_state_dict(torch.load("Nips_MNIST_t1.pt"), strict=False)
 
 
@@ -403,7 +417,7 @@ def main():
 
         if ACC_>ACC or ACC_ == ACC:
             ACC = ACC_
-            torch.save(model.state_dict(), "Nips_MNIST_t3_2_.pt")
+            torch.save(model.state_dict(), "Nips_MNIST_t100.pt")
             #fuse_module(model)
             #transfer_model(model, snn_model)
             #test(snn_model, device, snn_loader)

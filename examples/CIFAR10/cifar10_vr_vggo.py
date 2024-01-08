@@ -12,9 +12,9 @@ from catSNN import  SpikeDataset ,fuse_bn_recursively
 from models.vgg_0_5_0309 import VGG_o_,CatVGG_o
 import catSNN
 import catCuda
-T_reduce = 16
-timestep = 20
-timestep_f = 20
+T_reduce = 8
+timestep = 10
+timestep_f = 10
 min_1 = 0
 max_1 = T_reduce/timestep
 
@@ -46,28 +46,37 @@ class AddQuantization(object):
         #return torch.div(torch.floor(torch.mul(tensor, timestep_f)), timestep_f)
         return torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep)), timestep),min=min_1, max=max_1)
 
-class AddQuantization_new_(object):
+class AddQuantization_new(object):
     def __init__(self, min=0., max=1.):
         self.min = min
         self.max = max
         
     def __call__(self, tensor):
-        #return tensor + torch.randn(tensor.size()) * self.std + self.mean
-        #x = torch.clamp(x, min=min_1, max=max_1)
-        x1 = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep)), timestep),min=min_1, max=max_1)
+        x_origin = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep)), timestep),min=min_1, max=max_1)
+        #0/10,1/10,2/10,3/10,4/10,5/10,6/10,7/10,8/10
 
-        x2 = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep+1)), timestep+1),min=min_1, max=T_reduce/(timestep+1))
-        my_ones = torch.ones(x2.shape[0],x2.shape[1],x2.shape[2])
-        x2 = torch.where(x2==T_reduce/(timestep+1) , my_ones*max_1, x2)
+        x_origin_plus_1 = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep+1)), timestep+1),min=min_1, max=T_reduce/(timestep+1))
+        #0/11,1/11,2/11,3/11,4/11,5/11,6/11,7/11,8/11
 
-        x3 = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep-1)), timestep-1),min=min_1, max=T_reduce/(timestep-1))
-        my_ones = torch.ones(x3.shape[0],x3.shape[1],x3.shape[2])
-        x3 = torch.where(x3==T_reduce/(timestep-1) , my_ones*max_1, x3)
-        
-        x = torch.cat((x3, x2,x1,x3,x2,x1), 0)
-        #print(x)
+        my_ones = torch.ones(x_origin_plus_1.shape[0],x_origin_plus_1.shape[1],x_origin_plus_1.shape[2])
+        for i in range(0,T_reduce+1):
+            x_origin_plus_1 = torch.where(x_origin_plus_1 == i/(timestep + 1), i*my_ones/timestep, x_origin_plus_1)
+
+        x_origin_minus_1 = torch.clamp(torch.div(torch.floor(torch.mul(tensor, timestep-1)), timestep-1),min=min_1, max=T_reduce/(timestep-1))
+        my_ones = torch.ones(x_origin_minus_1.shape[0],x_origin_minus_1.shape[1],x_origin_minus_1.shape[2])
+        for i in range(0,T_reduce+1):
+            x_origin_minus_1 = torch.where(x_origin_minus_1 == i / ((timestep - 1)), i*my_ones   / timestep, x_origin_minus_1)
+        #print(x_origin_minus_1.shape)
+        x = torch.cat((x_origin_minus_1, x_origin_plus_1,x_origin ,x_origin_minus_1,x_origin_plus_1,x_origin), 0)
+        #x = torch.cat((x_origin, x_origin_plus_1,x_origin_minus_1,x_origin,x_origin_plus_1,x_origin_minus_1), 0)
         #print(x.shape)
+        # 找出所有唯一的值
+        #unique_values = set(x_flattened.tolist())
+        #print(unique_values)
+
         return x
+
+
 
 def change_shape(feature):
     datashape = feature.shape
@@ -202,12 +211,14 @@ def main():
     transform_train = transforms.Compose([
         transforms.ToTensor(),
         #turn to AddQuantization_new_ if T = 1
-        AddQuantization()
+        #AddQuantization()
+        AddQuantization_new()
         ])
 
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        AddQuantization()
+        #AddQuantization(),
+        AddQuantization_new()
         ])
 
     trainset = datasets.CIFAR10(
@@ -222,7 +233,8 @@ def main():
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         AddGaussianNoise(std=0.01),
-        AddQuantization()
+        #AddQuantization(),
+        AddQuantization_new()
         ])
         trainset = trainset + datasets.CIFAR10(root='./data', train=True, download=True, transform=im_aug)
 
@@ -233,12 +245,13 @@ def main():
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         AddGaussianNoise(std=0.01),
-        AddQuantization()
+        #AddQuantization()
+        AddQuantization_new()
         ])
         trainset = trainset + datasets.CIFAR10(root='./data', train=True, download=True, transform=im_aug)
     
     train_loader = torch.utils.data.DataLoader(
-       trainset, batch_size=256+512, shuffle=True)
+       trainset, batch_size=2048, shuffle=True)
 
     testset = datasets.CIFAR10(
         root='./data', train=False, download=False, transform=transform_test)
@@ -248,16 +261,13 @@ def main():
 
 
     snn_dataset = SpikeDataset(testset, T = args.T,theta = max_1-0.001)
-    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=100, shuffle=False)
+    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=500, shuffle=False)
 
     
     model = VGG_o_('o', clamp_max=1,bias =True).to(device)
     #t_training_20_
     #cifar10_0_5_ASG_100_08_0316_100_1_full_input
-    if args.resume != None:
-        #load_model(torch.load(args.resume), model)
-        model.load_state_dict(torch.load(args.resume), strict=False)
-    #model.load_state_dict(torch.load("cifar10_NIPS_t_8_c3_.pt"), strict=False)
+    model.load_state_dict(torch.load("cifar10_t_8_10_ice_tnnls_1.pt"), strict=False)
     snn_model = CatVGG_o('o', args.T,bias =True).to(device)
 
     
@@ -274,18 +284,18 @@ def main():
         correct = test(model, device, test_loader)
         if correct>correct_:
             correct_ = correct
-            torch.save(model.state_dict(), "cifar10_t_1_2dot5.pt")
+            torch.save(model.state_dict(), "cifar10_t_8_10_ice_tnnls_2.pt")
 
         scheduler.step()
     
     model = fuse_bn_recursively(model)
-    for param_tensor in model.state_dict():
-        print(param_tensor, "\t", model.state_dict()[param_tensor].size())
-    for param_tensor in snn_model.state_dict():
-        print(param_tensor, "\t", snn_model.state_dict()[param_tensor].size())
+    #for param_tensor in model.state_dict():
+    #    print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+    #for param_tensor in snn_model.state_dict():
+    #    print(param_tensor, "\t", snn_model.state_dict()[param_tensor].size())
 
     transfer_model(model, snn_model)
-    test(model, device, test_loader)
+    #test(model, device, test_loader)
     #with torch.no_grad():
     #    normalize_weight(snn_model.features, quantize_bit=32)
     test_(snn_model, device, snn_loader)

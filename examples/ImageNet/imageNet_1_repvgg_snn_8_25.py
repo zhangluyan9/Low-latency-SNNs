@@ -185,8 +185,8 @@ def transfer_model(src, dst, quantize_bit=32):
     dst.load_state_dict(reshape_dict, strict=False)
 
 def data_loader(batch_size=128, workers=1, pin_memory=True):
-    traindir = os.path.join('../../../../ImageNet/imagenet_raw/train')
-    valdir = os.path.join('../../../../ImageNet/imagenet_raw/val')
+    traindir = os.path.join('../../../../ImageNet/train')
+    valdir = os.path.join('../../../../ImageNet/val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -376,7 +376,7 @@ def main():
 
     #snn_dataset = SpikeDataset(val_dataset, T = args.T)
     snn_dataset = SpikeDataset(val_dataset, T = args.T, theta = max_1-0.001)
-    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=5, shuffle=False)
+    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=10, shuffle=False)
 
     #model1 = models.vgg19_bn(pretrained=True)
     #torch.save(model1.state_dict(), "imagevgg19bn_o.pt")
@@ -387,7 +387,7 @@ def main():
 
     model = VGG('repvgg_',bias = True).cuda()
     #image_vggrepb3
-    model.load_state_dict(torch.load("ImageNet_25_8_1.pt"), strict=False)
+    model.load_state_dict(torch.load("../../pretrain_weight/imagenet/ImageNet_25_8_1.pt"), strict=False)
     snn_model = CatVGG('repvgg_', args.T, bias = True).to(device)
     for param_tensor in snn_model.state_dict():
         print(param_tensor, "\t", snn_model.state_dict()[param_tensor].size())
@@ -398,7 +398,7 @@ def main():
     optimizer = optim.SGD(model.parameters(), lr=args.lr,momentum = 0.9,weight_decay= 1e-4)
     #optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
-    test_(model, device, val_loader)
+    #test_(model, device, val_loader)
     k = 0
     correct = 0
     for epoch in range(1, args.epochs + 1):
@@ -424,7 +424,7 @@ def main():
     model = fuse_bn_recursively(model)
     transfer_model(model, snn_model)
     print("SNN")
-    #test_(snn_model, device, snn_loader)
+    test_(snn_model, device, snn_loader)
 
     #torch.save(model.state_dict(), "imageNmybn11_c_d.pt")
     #torch.save(model1.state_dict(), "imageNmybn19_c_d_2_new_4_1218_.pt")

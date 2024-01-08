@@ -12,9 +12,9 @@ from catSNN import  SpikeDataset ,fuse_bn_recursively
 from models.vgg_0_5_0309 import VGG_o_,CatVGG_o
 import catSNN
 import catCuda
-T_reduce = 2
-timestep = 3
-timestep_f = 3
+T_reduce = 8
+timestep = 10
+timestep_f = 10
 min_1 = 0
 max_1 = T_reduce/timestep
 
@@ -257,7 +257,7 @@ def main():
     if args.resume != None:
         #load_model(torch.load(args.resume), model)
         model.load_state_dict(torch.load(args.resume), strict=False)
-    #model.load_state_dict(torch.load("cifar10_NIPS_t_8_c3_.pt"), strict=False)
+    model.load_state_dict(torch.load("cifar10_t_8_10_ice.pt"), strict=False)
     snn_model = CatVGG_o('o', args.T,bias =True).to(device)
 
     

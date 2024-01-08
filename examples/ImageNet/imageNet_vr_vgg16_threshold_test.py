@@ -18,10 +18,10 @@ import catCuda
 from torch.utils.data.sampler import SubsetRandomSampler
 
 import torchvision.models as models
-weight_load = "image_200_full_1.npz"
-T_reduce = 200
-timestep = 250
-timestep_f = 250
+weight_load = "../../pretrain_weight/imagenet/image_200_full_1.npz"
+T_reduce = 160
+timestep = 200
+timestep_f = 200
 min_1 = 0
 max_1 = T_reduce/timestep
 
@@ -72,8 +72,8 @@ def quantize_to_bit(x, nbit):
     return torch.mul(torch.round(torch.div(x, 2.0**(1-nbit))), 2.0**(1-nbit))
 
 def data_loader(batch_size=128, workers=1, pin_memory=True):
-    traindir = os.path.join('../../../../ImageNet/imagenet_raw/train')
-    valdir = os.path.join('../../../../ImageNet/imagenet_raw/val')
+    traindir = os.path.join('../../../../ImageNet/train')
+    valdir = os.path.join('../../../../ImageNet/val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -393,7 +393,7 @@ def main():
     train_loader, val_loader , val_dataset,train_dataset= data_loader()
     snn_dataset = SpikeDataset(val_dataset, T = args.T,theta = max_1-0.0001)
     #snn_dataset = SpikeDataset(val_dataset, T = args.T)
-    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=2, shuffle=False)
+    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=4, shuffle=False)
 
     from models.vgg_imagenet_0_8 import CatVGG,VGG1
     #model1 = models.vgg19_bn(pretrained=True)
@@ -407,7 +407,7 @@ def main():
 
     #imageNmybn19_c_d_2_new_4_1218
     #imageNmybn19_c_d_2_new_4_1227_200_full
-    model1.load_state_dict(torch.load("imageNmybn16_NIPS_t140.pt"), strict=False)
+    model1.load_state_dict(torch.load("../../pretrain_weight/imagenet/imageNmybn16_NIPS_t140.pt"), strict=False)
     for param_tensor in snn_model.state_dict():
         print(param_tensor, "\t", snn_model.state_dict()[param_tensor].size())
     for param_tensor in snn_model_training.state_dict():
@@ -504,7 +504,7 @@ def main():
 
     model_dict.update(reshape_dict)
     snn_model_training.load_state_dict(model_dict)
-    #test_snn(snn_model_training, device, snn_loader)
+    test_snn(snn_model_training, device, snn_loader)
 
     #test(snn_model, device, snn_loader)
     #if args.save_model
