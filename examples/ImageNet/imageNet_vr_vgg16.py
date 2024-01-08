@@ -18,9 +18,9 @@ from torch.utils.data.sampler import SubsetRandomSampler
 
 import torchvision.models as models
 
-T_reduce = 32
-timestep = 40
-timestep_f = 40
+T_reduce = 500
+timestep = 500
+timestep_f = 500
 min_1 = 0
 max_1 = T_reduce/timestep
 
@@ -71,8 +71,8 @@ def quantize_to_bit(x, nbit):
     return torch.mul(torch.round(torch.div(x, 2.0**(1-nbit))), 2.0**(1-nbit))
 
 def data_loader(batch_size=128, workers=1, pin_memory=True):
-    traindir = os.path.join('../../../../ImageNet/imagenet_raw/train')
-    valdir = os.path.join('../../../../ImageNet/imagenet_raw/val')
+    traindir = os.path.join('../../../../ImageNet/train')
+    valdir = os.path.join('../../../../ImageNet/val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -119,7 +119,7 @@ def data_loader(batch_size=128, workers=1, pin_memory=True):
     #val_dataset_100 = Subset(val_dataset, range(0,15000))
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=60,
+        batch_size=300,
         shuffle=True,
         num_workers=workers,
         pin_memory=pin_memory,
@@ -129,7 +129,7 @@ def data_loader(batch_size=128, workers=1, pin_memory=True):
     train_sampler = SubsetRandomSampler(torch.arange(1000, 1100))
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=200,
+        batch_size=300,
         shuffle=False,
         num_workers=workers,
         pin_memory=pin_memory,
@@ -248,7 +248,7 @@ def main():
     train_loader, val_loader , val_dataset= data_loader()
     snn_dataset = SpikeDataset(val_dataset, T = args.T,theta = max_1-0.0001)
     #snn_dataset = SpikeDataset(val_dataset, T = args.T)
-    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=10, shuffle=False)
+    snn_loader = torch.utils.data.DataLoader(snn_dataset, batch_size=20, shuffle=False)
 
     from models.vgg_imagenet_0_8 import CatVGG,VGG1
     #model1 = models.vgg19_bn(pretrained=True)
@@ -260,7 +260,7 @@ def main():
     snn_model = CatVGG('VGG16', args.T, bias = True).to(device)
     #imageNmybn19_c_d_2_new_4_1218
     #imageNmybn19_c_d_2_new_4_1227_200_full
-    model1.load_state_dict(torch.load("imageNet_t_32_40.pt"), strict=False)
+    model1.load_state_dict(torch.load("../../pretrain_weight/imagenet/imageNet_t_32_40.pt"), strict=False)
     #for param_tensor in snn_model.state_dict():
     #    print(param_tensor, "\t", snn_model.state_dict()[param_tensor].size())
     #for param_tensor in model1.state_dict():
@@ -278,7 +278,7 @@ def main():
         correct = test(model1, device, val_loader)
         if correct>correct_:
             correct_ = correct
-            torch.save(model1.state_dict(), "imageNmybn16_NIPS_t32.pt")
+            torch.save(model1.state_dict(), "imageNmybn16_NIPS_t500.pt")
         k+=1
         scheduler.step()
     #torch.save(model1.state_dict(), "imageNet_t_32_40.pt")
@@ -289,7 +289,7 @@ def main():
     #model1 = fuse_bn_recursively(model)
     #torch.save(model.state_dict(), "imageNmybn19_c_d_2_fused.pt")
     model1 = fuse_bn_recursively(model1)
-    #correct = test_(model1, device, val_loader)
+    correct = test_(model1, device, val_loader)
 
     transfer_model(model1, snn_model)
     print("successful transfer")
