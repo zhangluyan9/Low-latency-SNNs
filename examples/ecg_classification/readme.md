@@ -15,10 +15,10 @@ For 2-class SNN, the confusion matrix is:
  [[36255  7778]
  
  [ 1051  4607]]
+ 
 Test set: Average loss: 1.4844, Accuracy: 40862/49691 (82%)
 
 For 4-class SNN, the confusion matrix is:
-Confusion Matrix:
 
  [[4926 1635 1195   22]
  
